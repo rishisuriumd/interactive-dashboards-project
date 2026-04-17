@@ -14,9 +14,11 @@ def _():
     import nibabel as nib
     from scipy.spatial import KDTree
     import numpy as np
+    from create_atlas_giis import build_highlight_gii
+    import matplotlib.pyplot as plt
 
 
-    return KDTree, NiiVue, Path, datasets, mo, nib
+    return KDTree, NiiVue, Path, build_highlight_gii, datasets, mo, nib
 
 
 @app.cell(hide_code=True)
@@ -56,7 +58,7 @@ def _(mo):
 def _(mo):
     get_label, set_label = mo.state("Hover over brain...")
     get_region, set_region = mo.state(None)
-    return get_label, set_label, set_region
+    return get_label, get_region, set_label, set_region
 
 
 @app.cell
@@ -87,22 +89,55 @@ def _(KDTree, fsaverage, nib):
 
 
 @app.cell
-def _(NiiVue, Path, fsaverage, hemi, hemisphere, set_label, set_region):
-    meshes = []
-    if hemi.value in "Left":
-        meshes.append({
-            "path": Path(fsaverage["infl_left"]),
-            "layers": [{"path": Path("data/atlases/lh.HCPMMP1.label.gii")}]
-        })
-    if hemi.value in "Right":
-        meshes.append({
-            "path": Path(fsaverage["infl_right"]),
-            "layers": [{"path": Path("data/atlases/rh.HCPMMP1.label.gii")}]
-        })
+def _(mo):
+    mode = mo.ui.switch(value=False, label="Show isolated region only")
+    mode
+    return (mode,)
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(
+    NiiVue,
+    Path,
+    build_highlight_gii,
+    fsaverage,
+    get_region,
+    hemi,
+    hemisphere,
+    mo,
+    mode,
+    set_label,
+    set_region,
+):
+    region = get_region()
+    surf_key = "infl_left" if hemi.value == "Left" else "infl_right"
+    h = hemisphere[hemi.value]
+    atlas_side = "lh" if hemi.value == "Left" else "rh"
+
+    if mode.value and region is not None and region["hemi"] == hemi.value:
+        parcel_id = region["parcel_id"]
+        tmp_path = Path(f"data/atlases/_highlight_{atlas_side}_{parcel_id}.label.gii")
+        build_highlight_gii(h["labels"], parcel_id, region["name"], tmp_path)
+        mesh_entry = {
+            "path": Path(fsaverage[surf_key]),
+            "rgba255": [160, 160, 160, 255],
+            "layers": [{"path": tmp_path}],
+        }
+        header = f"### Isolated: **{region['name']}** ({region['hemi']})"
+    else:
+        mesh_entry = {
+            "path": Path(fsaverage[surf_key]),
+            "layers": [{"path": Path(f"data/atlases/{atlas_side}.HCPMMP1.label.gii")}],
+        }
+        header = "### Full atlas"
 
     nv = NiiVue()
-    nv.load_meshes(meshes)
-
+    nv.load_meshes([mesh_entry])
 
 
     @nv.on_location_change
@@ -110,18 +145,18 @@ def _(NiiVue, Path, fsaverage, hemi, hemisphere, set_label, set_region):
         coords_str = location["string"]
         try:
             x, y, z = [float(v) for v in coords_str.split("×")]
-            h = hemisphere[hemi.value]
-            dist, idx = h["tree"].query([x, y, z])
-            parcel_id = int(h["labels"][idx])
-            region = h["names"][parcel_id]
+            hh = hemisphere[hemi.value]
+            dist, idx = hh["tree"].query([x, y, z])
+            parcel_id = int(hh["labels"][idx])
+            region_name = hh["names"][parcel_id]
 
-            set_label(f"{hemi.value} | {region} | vertex: {idx} | {coords_str}")
-            set_region({"hemi": hemi.value, "parcel_id": parcel_id, "name": region})
+            set_label(f"{hemi.value} | {region_name} | vertex: {idx} | {coords_str}")
+            set_region({"hemi": hemi.value, "parcel_id": parcel_id, "name": region_name})
         except Exception as e:
             set_label(f"Error: {e}")
 
+    mo.vstack([mo.md(header), mo.ui.anywidget(nv)])
 
-    nv
     return
 
 
